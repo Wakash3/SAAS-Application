@@ -1,0 +1,78 @@
+﻿/* Pure CSS - No Tailwind needed */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: #f9fafb;
+  color: #1a1a1a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Custom Msingi Colors */
+.bg-msingi-green {
+  background-color: #1a5c2e;
+}
+
+.text-msingi-green {
+  color: #1a5c2e;
+}
+
+.bg-msingi-light {
+  background-color: #f0f7f3;
+}
+
+/* Utility classes */
+.bg-white {
+  background-color: white;
+}
+
+.text-white {
+  color: white;
+}
+
+.p-4 {
+  padding: 1rem;
+}
+
+.m-4 {
+  margin: 1rem;
+}
+
+.rounded {
+  border-radius: 0.25rem;
+}
+
+.rounded-lg {
+  border-radius: 0.5rem;
+}
+
+.flex {
+  display: flex;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.grid {
+  display: grid;
+}
+
+.w-full {
+  width: 100%;
+}
+
+.h-screen {
+  height: 100vh;
+}
+
+.shadow {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}

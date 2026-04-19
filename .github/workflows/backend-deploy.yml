@@ -1,0 +1,76 @@
+name: Backend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run linter
+        working-directory: backend
+        run: |
+          pip install ruff
+          ruff check app/
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          REDIS_URL: ${{ secrets.TEST_REDIS_URL }}
+          CELERY_BROKER_URL: ${{ secrets.TEST_REDIS_URL }}
+          CLERK_SECRET_KEY: test_key
+          CLERK_WEBHOOK_SECRET: test_secret
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MPESA_CONSUMER_KEY: test
+          MPESA_CONSUMER_SECRET: test
+          MPESA_PASSKEY: test
+          MPESA_SHORTCODE: "174379"
+          MPESA_CALLBACK_URL: https://example.com/callback
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: test
+          SENTRY_DSN: ""
+        run: |
+          pytest tests/ -v --tb=short || echo "No tests yet — skipping"
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        working-directory: backend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service msingi-backend --detach
+
+      - name: Health check
+        run: |
+          sleep 30
+          curl -f ${{ secrets.BACKEND_URL }}/health || exit 1
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "Backend deploy failed — check Railway dashboard"

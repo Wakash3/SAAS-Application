@@ -1,0 +1,37 @@
+# -- ENV FILES -------------------------------------------------
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+frontend/.env.local
+frontend/.env.*.local
+
+# -- Python ----------------------------------------------------
+venv/
+venv312/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# -- Celery ----------------------------------------------------
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
+# -- Node ------------------------------------------------------
+node_modules/
+.next/
+frontend/package-lock.json
+frontend/next-env.d.ts
+
+# -- OS --------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# -- Misc ------------------------------------------------------
+.agents/
+skills-lock.json
