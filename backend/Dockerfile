@@ -16,4 +16,4 @@ COPY . .
 EXPOSE 8000
 
 # Use shell form so $PORT variable is expanded
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1
