@@ -1,13 +1,19 @@
 ﻿import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+
+// Move CSS to a separate import that Next.js handles
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Msingi Retail Intelligence",
-  description: "Kenya-first retail SaaS for petroleum stations and convenience stores",
+  description: "Kenya-first retail SaaS",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <ClerkProvider>
       <html lang="en">
