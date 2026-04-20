@@ -8,7 +8,7 @@ export default function OverviewPage() {
 
   useEffect(() => {
     api.get("/api/v1/auth/me").then(setData).catch(console.error);
-  }, []);
+  }, [api]);
 
   return (
     <div>

@@ -12,7 +12,7 @@ export default function ReportsPage() {
       const id = me.branches?.[0]?.id;
       if (id) api.get<any>(`/api/v1/reports/summary?branch_id=${id}&days=${days}`).then(setData);
     });
-  }, [days]);
+  }, [days, api]);
 
   return (
     <div>

@@ -1,12 +1,11 @@
 ﻿import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-
-// Move CSS to a separate import that Next.js handles
+// @ts-ignore
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Msingi Retail Intelligence",
-  description: "Kenya-first retail SaaS",
+  description: "Kenya-first retail SaaS for petroleum stations and convenience stores",
 };
 
 export default function RootLayout({

@@ -16,7 +16,7 @@ export default function AlertsPage() {
         ]).then(([inv, fuel]) => setData({ inv, fuel }));
       }
     });
-  }, []);
+  }, [api]);
 
   const lowFmcg = data?.inv?.fmcg?.filter((p: any) => p.low) || [];
   const lowFuel = data?.fuel?.filter((f: any) => f.low) || [];

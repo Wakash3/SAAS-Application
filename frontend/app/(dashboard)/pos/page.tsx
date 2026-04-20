@@ -20,7 +20,7 @@ export default function POSPage() {
         api.get<Product[]>(`/api/v1/products/?branch_id=${id}`).then(setProducts);
       }
     });
-  }, []);
+  }, [api]);
 
   function addToCart(p: Product) {
     setCart((prev) => {

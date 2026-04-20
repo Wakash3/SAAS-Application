@@ -5,7 +5,7 @@ import { useApi } from "@/lib/api";
 export default function SettingsPage() {
   const api = useApi();
   const [me, setMe] = useState<any>(null);
-  useEffect(() => { api.get<any>("/api/v1/auth/me").then(setMe); }, []);
+  useEffect(() => { api.get<any>("/api/v1/auth/me").then(setMe); }, [api]);
 
   return (
     <div>

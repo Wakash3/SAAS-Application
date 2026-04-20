@@ -21,7 +21,7 @@ export default function FuelPage() {
         api.get<FuelProduct[]>(`/api/v1/fuel/?branch_id=${id}`).then(setFuels);
       }
     });
-  }, []);
+  }, [api]);
 
   return (
     <div>

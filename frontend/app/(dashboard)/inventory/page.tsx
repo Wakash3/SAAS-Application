@@ -15,7 +15,7 @@ export default function InventoryPage() {
         api.get<any>(`/api/v1/inventory/summary?branch_id=${id}`).then(setData);
       }
     });
-  }, []);
+  }, [api]);
 
   return (
     <div>

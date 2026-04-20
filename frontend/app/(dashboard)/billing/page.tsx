@@ -11,7 +11,7 @@ const PLANS = [
 export default function BillingPage() {
   const api = useApi();
   const [plan, setPlan] = useState("");
-  useEffect(() => { api.get<any>("/api/v1/auth/me").then((me) => setPlan(me.tenant?.plan)); }, []);
+  useEffect(() => { api.get<any>("/api/v1/auth/me").then((me) => setPlan(me.tenant?.plan)); }, [api]);
 
   return (
     <div>
