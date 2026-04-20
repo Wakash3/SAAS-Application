@@ -5,6 +5,15 @@ const nextConfig = {
   swcMinify: true,
   poweredByHeader: false, // Security: remove X-Powered-By header
   
+  // Skip type checking and linting during build
+  // (we handle this in CI separately)
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  
   // Images (your app will use images for products)
   images: {
     domains: [], // Add your CDN domains here when needed
