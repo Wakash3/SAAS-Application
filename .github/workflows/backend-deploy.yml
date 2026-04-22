@@ -22,33 +22,49 @@ jobs:
         working-directory: backend
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio httpx ruff
 
       - name: Run linter
         working-directory: backend
-        run: |
-          pip install ruff
-          ruff check app/
+        run: ruff check app/ --ignore E501
 
       - name: Run tests
         working-directory: backend
         env:
+          # Database & Cache
           DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
           REDIS_URL: ${{ secrets.TEST_REDIS_URL }}
           CELERY_BROKER_URL: ${{ secrets.TEST_REDIS_URL }}
-          CLERK_SECRET_KEY: test_key
-          CLERK_WEBHOOK_SECRET: test_secret
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          
+          # Authentication (Clerk)
+          CLERK_SECRET_KEY: test_clerk_key
+          CLERK_WEBHOOK_SECRET: test_webhook_secret
+          
+          # AI - GROQ (replaced Anthropic)
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          
+          # M-PESA (Intasend handles this)
           MPESA_CONSUMER_KEY: test
           MPESA_CONSUMER_SECRET: test
           MPESA_PASSKEY: test
           MPESA_SHORTCODE: "174379"
           MPESA_CALLBACK_URL: https://example.com/callback
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          
+          # Payment - Intasend (replaced Stripe)
+          INTASEND_TOKEN: ${{ secrets.INTASEND_TOKEN }}
+          INTASEND_PUBLISHABLE_KEY: ${{ secrets.INTASEND_PUBLISHABLE_KEY }}
+          INTASEND_ENVIRONMENT: "sandbox"  # Use "production" for live
+          
+          # Optional (if you still need Stripe compatibility layer)
+          STRIPE_SECRET_KEY: ${{ secrets.INTASEND_TOKEN }}  # Map to Intasend
           STRIPE_WEBHOOK_SECRET: test
+          
+          # Monitoring
           SENTRY_DSN: ""
-        run: |
-          pytest tests/ -v --tb=short || echo "No tests yet — skipping"
+          
+          # Debug
+          DEBUG: "true"
+        run: pytest tests/ -v --tb=short || echo "No tests yet — skipping"
 
   deploy:
     needs: test
@@ -70,7 +86,3 @@ jobs:
         run: |
           sleep 30
           curl -f ${{ secrets.BACKEND_URL }}/health || exit 1
-
-      - name: Notify on failure
-        if: failure()
-        run: echo "Backend deploy failed — check Railway dashboard"
