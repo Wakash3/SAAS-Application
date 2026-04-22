@@ -1,14 +1,27 @@
 "use client";
 
 import {
-  OrganizationSwitcher,
   SignInButton,
+  SignUpButton,
   SignedIn,
   SignedOut,
   UserButton,
+  OrganizationSwitcher,
+  useUser,
 } from "@clerk/nextjs";
 
 export function NavBar() {
+  const { isLoaded } = useUser();
+
+  if (!isLoaded) {
+    return (
+      <nav className="flex justify-between items-center p-4 bg-white shadow-md">
+        <div className="text-xl font-bold text-blue-600">Msingi</div>
+        <div className="text-gray-500">Loading...</div>
+      </nav>
+    );
+  }
+
   return (
     <nav className="flex justify-between items-center p-4 bg-white shadow-md">
       <div className="text-xl font-bold text-blue-600">Msingi</div>
@@ -19,17 +32,16 @@ export function NavBar() {
               Sign In
             </button>
           </SignInButton>
+          <SignUpButton mode="modal">
+            <button className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+              Sign Up
+            </button>
+          </SignUpButton>
         </SignedOut>
         <SignedIn>
           <OrganizationSwitcher 
             afterSelectOrganizationUrl="/dashboard"
             afterCreateOrganizationUrl="/dashboard"
-            appearance={{
-              elements: {
-                rootBox: "flex items-center",
-                organizationSwitcherTrigger: "px-3 py-2 rounded-lg border border-gray-200"
-              }
-            }}
           />
           <UserButton afterSignOutUrl="/" />
         </SignedIn>

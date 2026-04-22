@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useOrganization, useUser, OrganizationSwitcher } from "@clerk/nextjs";
 import { useApi } from "@/lib/api";
 
-export default function OverviewPage() {
+export default function DashboardPage() {
   const api = useApi();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -23,11 +23,27 @@ export default function OverviewPage() {
 
   if (!isOrgLoaded || !isUserLoaded) {
     return (
-      <div className="p-8">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
-          <div className="h-4 bg-gray-200 rounded w-1/2 mb-8"></div>
-          <div className="h-32 bg-gray-200 rounded"></div>
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold mb-4">Please sign in</h1>
+          <p className="text-gray-600 mb-6">Sign in to access your dashboard</p>
+          <a 
+            href="/sign-in" 
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Sign In
+          </a>
         </div>
       </div>
     );
@@ -35,17 +51,27 @@ export default function OverviewPage() {
 
   if (!organization) {
     return (
-      <div className="p-8 text-center">
-        <h1 className="text-2xl font-bold mb-4">Welcome to Msingi</h1>
-        <p className="text-gray-600 mb-6">
-          Create an organization to start managing your retail business
-        </p>
-        <div className="inline-block">
-          <OrganizationSwitcher />
+      <div className="flex min-h-screen items-center justify-center p-8">
+        <div className="text-center max-w-md">
+          <h1 className="text-2xl font-bold mb-4">Welcome to Msingi</h1>
+          <p className="text-gray-600 mb-6">
+            Create an organization to start managing your retail business
+          </p>
+          <div className="inline-block w-full">
+            <OrganizationSwitcher 
+              afterCreateOrganizationUrl="/dashboard"
+              appearance={{
+                elements: {
+                  rootBox: "w-full",
+                  organizationSwitcherTrigger: "w-full px-4 py-2 border border-gray-300 rounded-lg"
+                }
+              }}
+            />
+          </div>
+          <p className="mt-6 text-sm text-gray-500">
+            💡 Tip: Click "Create organization" to set up your petrol station or retail store
+          </p>
         </div>
-        <p className="mt-6 text-sm text-gray-500">
-          💡 Tip: Click "Create organization" to set up your petrol station or retail store
-        </p>
       </div>
     );
   }
@@ -56,7 +82,11 @@ export default function OverviewPage() {
         <div className="animate-pulse">
           <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
           <div className="h-4 bg-gray-200 rounded w-1/2 mb-8"></div>
-          <div className="h-32 bg-gray-200 rounded"></div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="h-32 bg-gray-200 rounded"></div>
+            <div className="h-32 bg-gray-200 rounded"></div>
+            <div className="h-32 bg-gray-200 rounded"></div>
+          </div>
         </div>
       </div>
     );
@@ -93,6 +123,7 @@ export default function OverviewPage() {
       {!data && (
         <div className="bg-white rounded-lg shadow p-8 border border-gray-100 text-center">
           <p className="text-gray-600">Loading your business data...</p>
+          <p className="text-sm text-gray-400 mt-2">If this takes too long, check your database connection</p>
         </div>
       )}
 
