@@ -8,6 +8,7 @@ from .routers import (
     inventory, stocktake, payments, erp,
     reports, webhooks
 )
+from .health import router as health_router
 import logging
 import json
 
@@ -47,6 +48,10 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
+# Include health router first (no prefix for health check)
+app.include_router(health_router, tags=["health"])
+
+# Include all other routers with /api/v1 prefix
 for r in [auth, chat, products, fuel, sales,
           inventory, stocktake, payments, erp,
           reports, webhooks]:
@@ -75,16 +80,7 @@ async def shutdown_event():
         logger.error(f"❌ Error closing database: {e}")
 
 
-# ── Health ────────────────────────────────────────────────────
-@app.get("/health")
-async def health():
-    return {
-        "status": "healthy",
-        "version": "1.0.0",
-        "debug": settings.DEBUG
-    }
-
-
+# ── Root Endpoints ────────────────────────────────────────────
 @app.get("/")
 async def root():
     return {
