@@ -24,6 +24,12 @@ export function NavBar() {
           <OrganizationSwitcher 
             afterSelectOrganizationUrl="/dashboard"
             afterCreateOrganizationUrl="/dashboard"
+            appearance={{
+              elements: {
+                rootBox: "flex items-center",
+                organizationSwitcherTrigger: "px-3 py-2 rounded-lg border border-gray-200"
+              }
+            }}
           />
           <UserButton afterSignOutUrl="/" />
         </SignedIn>

@@ -1,7 +1,6 @@
 ﻿import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { NavBar } from "@/components/NavBar";
-// @ts-ignore
+import { NavBar } from "../components/NavBar";  // ← Use relative path
 import "./globals.css";
 
 export const metadata: Metadata = {
