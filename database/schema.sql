@@ -1,6 +1,19 @@
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Drop existing tables if they exist (clean slate)
+DROP TABLE IF EXISTS sale_items CASCADE;
+DROP TABLE IF EXISTS sales CASCADE;
+DROP TABLE IF EXISTS stocktake_items CASCADE;
+DROP TABLE IF EXISTS stocktake_snapshots CASCADE;
+DROP TABLE IF EXISTS mpesa_transactions CASCADE;
+DROP TABLE IF EXISTS stock_deliveries CASCADE;
+DROP TABLE IF EXISTS suppliers CASCADE;
+DROP TABLE IF EXISTS fuel_products CASCADE;
+DROP TABLE IF EXISTS products CASCADE;
+DROP TABLE IF EXISTS branches CASCADE;
+DROP TABLE IF EXISTS tenants CASCADE;
+
 -- TENANTS
 CREATE TABLE tenants (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -42,7 +55,7 @@ CREATE TABLE products (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- FUEL PRODUCTS (metered inventory)
+-- FUEL PRODUCTS
 CREATE TABLE fuel_products (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL,
@@ -105,7 +118,7 @@ CREATE TABLE stock_deliveries (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- AUTOMATED STOCKTAKE SNAPSHOTS
+-- STOCKTAKE SNAPSHOTS
 CREATE TABLE stocktake_snapshots (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL,
@@ -157,8 +170,6 @@ CREATE TABLE suppliers (
 );
 
 -- ENABLE ROW LEVEL SECURITY
--- NOTE: With Neon + SQLAlchemy we enforce tenant isolation at app level
--- and also at DB level via RLS for extra safety.
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fuel_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales ENABLE ROW LEVEL SECURITY;
@@ -168,7 +179,17 @@ ALTER TABLE stocktake_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mpesa_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
 
--- RLS POLICIES (tenant isolation via session variable)
+-- RLS POLICIES (drop existing first to avoid errors)
+DROP POLICY IF EXISTS tenant_iso ON products;
+DROP POLICY IF EXISTS tenant_iso ON fuel_products;
+DROP POLICY IF EXISTS tenant_iso ON sales;
+DROP POLICY IF EXISTS tenant_iso ON sale_items;
+DROP POLICY IF EXISTS tenant_iso ON stocktake_snapshots;
+DROP POLICY IF EXISTS tenant_iso ON stocktake_items;
+DROP POLICY IF EXISTS tenant_iso ON mpesa_transactions;
+DROP POLICY IF EXISTS tenant_iso ON suppliers;
+
+-- Create fresh policies
 CREATE POLICY tenant_iso ON products
   USING (tenant_id::text = current_setting('app.current_tenant', true));
 CREATE POLICY tenant_iso ON fuel_products
@@ -186,11 +207,11 @@ CREATE POLICY tenant_iso ON mpesa_transactions
 CREATE POLICY tenant_iso ON suppliers
   USING (tenant_id::text = current_setting('app.current_tenant', true));
 
--- INDEXES (critical for performance)
-CREATE INDEX idx_sales_tenant_date ON sales(tenant_id, created_at DESC);
-CREATE INDEX idx_products_tenant ON products(tenant_id, is_active);
-CREATE INDEX idx_fuel_tenant ON fuel_products(tenant_id, branch_id);
-CREATE INDEX idx_mpesa_checkout ON mpesa_transactions(checkout_request_id);
-CREATE INDEX idx_stocktake_date ON stocktake_snapshots(tenant_id, snapshot_date);
-CREATE INDEX idx_branches_tenant ON branches(tenant_id);
-CREATE INDEX idx_suppliers_tenant ON suppliers(tenant_id);
+-- INDEXES
+CREATE INDEX IF NOT EXISTS idx_sales_tenant_date ON sales(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_products_tenant ON products(tenant_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_fuel_tenant ON fuel_products(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_mpesa_checkout ON mpesa_transactions(checkout_request_id);
+CREATE INDEX IF NOT EXISTS idx_stocktake_date ON stocktake_snapshots(tenant_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_branches_tenant ON branches(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_tenant ON suppliers(tenant_id);
