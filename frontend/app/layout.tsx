@@ -1,5 +1,6 @@
 ﻿import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { NavBar } from "@/components/NavBar";
 // @ts-ignore
 import "./globals.css";
 
@@ -16,7 +17,10 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body>{children}</body>
+        <body>
+          <NavBar />
+          {children}
+        </body>
       </html>
     </ClerkProvider>
   );
