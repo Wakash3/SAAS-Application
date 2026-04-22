@@ -1,7 +1,21 @@
+# app/core/config.py
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import Optional
+from dotenv import load_dotenv
+import os
+from pathlib import Path
 
+# Get the absolute path to the .env file
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_PATH = BASE_DIR / ".env"
+
+# Force load the .env file
+if ENV_PATH.exists():
+    load_dotenv(ENV_PATH, override=True)
+    print(f"✅ Loaded .env from: {ENV_PATH}")
+else:
+    print(f"❌ .env file not found at: {ENV_PATH}")
 
 class Settings(BaseSettings):
     # App
@@ -42,11 +56,11 @@ class Settings(BaseSettings):
     MPESA_ENVIRONMENT: str = "sandbox"
     MPESA_TIMEOUT: int = 30
 
-    # Stripe — optional with safe defaults
-    STRIPE_SECRET_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_API_VERSION: str = "2024-12-18.acacia"
-    STRIPE_TIMEOUT: int = 30
+    # INTASEND (Replaces Stripe)
+    INTASEND_PUBLISHABLE_KEY: str = ""
+    INTASEND_SECRET_KEY: str = ""
+    INTASEND_ENVIRONMENT: str = "sandbox"
+    INTASEND_API_URL: str = "https://sandbox.intasend.com/api/"
 
     # Cloudflare R2 — fully optional
     R2_ACCOUNT_ID: str = ""
@@ -102,6 +116,11 @@ class Settings(BaseSettings):
             return "https://api.safaricom.co.ke"
         return "https://sandbox.safaricom.co.ke"
 
+    def get_intasend_api_url(self) -> str:
+        if self.INTASEND_ENVIRONMENT == "production":
+            return "https://payment.intasend.com/api/"
+        return "https://sandbox.intasend.com/api/"
+
     def get_r2_endpoint(self) -> str:
         if self.R2_ACCOUNT_ID:
             return f"https://{self.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
@@ -124,3 +143,17 @@ def get_groq_config() -> dict:
         "temperature": settings.GROQ_TEMPERATURE,
         "timeout": settings.GROQ_TIMEOUT,
     }
+
+
+# Debug: Print which variables are loaded (remove in production)
+if settings.DEBUG:
+    print("\n" + "=" * 50)
+    print("ENVIRONMENT VARIABLES LOADED:")
+    print("=" * 50)
+    print(f"DATABASE_URL: {'✅' if settings.DATABASE_URL else '❌'}")
+    print(f"REDIS_URL: {'✅' if settings.REDIS_URL else '❌'}")
+    print(f"CELERY_BROKER_URL: {'✅' if settings.CELERY_BROKER_URL else '❌'}")
+    print(f"CLERK_SECRET_KEY: {'✅' if settings.CLERK_SECRET_KEY else '❌'}")
+    print(f"CLERK_WEBHOOK_SECRET: {'✅' if settings.CLERK_WEBHOOK_SECRET else '❌'}")
+    print(f"GROQ_API_KEY: {'✅' if settings.GROQ_API_KEY else '❌'}")
+    print("=" * 50 + "\n")

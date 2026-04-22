@@ -4,13 +4,14 @@ uvicorn[standard]==0.30.1
 python-multipart==0.0.9
 httpx==0.27.0
 
-# Pydantic
-pydantic==2.13.3
+# Pydantic - Version 2.5.3 has pre-built wheels for Windows
+pydantic==2.5.3
 pydantic-settings==2.1.0
+pydantic-core==2.14.6
 
-# Database
-sqlalchemy==2.0.49
-psycopg2-binary==2.9.10
+# Database - asyncpg has Windows wheels
+sqlalchemy==2.0.25
+asyncpg==0.29.0
 alembic==1.13.1
 
 # Redis & Celery
@@ -32,13 +33,10 @@ boto3==1.34.108
 # Webhooks
 svix==1.15.0
 
-# IntaSend (Payment)
+# IntaSend
 intasend-python==1.1.2
 requests==2.31.0
 
 # Utilities
 python-dotenv==1.0.0
 email-validator==2.1.0
-
-
-
