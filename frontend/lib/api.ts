@@ -1,3 +1,5 @@
+"use client";
+
 import { useAuth } from "@clerk/nextjs";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "https://saas-application-saas.up.railway.app";
@@ -19,7 +21,7 @@ export function useApi() {
     }
 
     // Get the token
-    const token = await getToken({ template: "default" });
+    const token = await getToken();
     
     if (!token) {
       console.error("No token available - token is null");
