@@ -12,6 +12,14 @@ export default function SignInPage() {
           routing="hash"
           redirectUrl="/dashboard"
           signUpUrl="/sign-up"
+          appearance={{
+            elements: {
+              rootBox: "w-full",
+              card: "shadow-none",
+              headerTitle: "hidden",
+              headerSubtitle: "hidden",
+            }
+          }}
         />
       </div>
     </div>

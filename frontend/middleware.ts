@@ -1,27 +1,25 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isPublic = createRouteMatcher([
+// Define public routes that don't require authentication
+const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks(.*)",
+  "/api/health(.*)",
 ]);
 
-export default clerkMiddleware(
-  async (auth, req) => {
-    if (!isPublic(req)) {
-      await auth().protect();
-    }
-  },
-  {
-    authorizedParties: [
-      "https://saas-application-saas.up.railway.app",
-      "https://saas-application-u2pt.vercel.app",
-      "http://localhost:3000",
-    ],
+export default clerkMiddleware(async (auth, request) => {
+  if (!isPublicRoute(request)) {
+    auth.protect();
   }
-);
+});
 
 export const config = {
-  matcher: ["/((?!_next|.*\\..*).*)", "/(api|trpc)(.*)"],
+  matcher: [
+    // Skip Next.js internals and all static files
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Always run for API routes
+    "/(api|trpc)(.*)",
+  ],
 };

@@ -15,7 +15,7 @@ export default function StocktakePage() {
         api.get<any>(`/api/v1/stocktake/latest?branch_id=${id}`).then(setSnap);
       }
     });
-  }, [api]);
+  }, []);
 
   return (
     <div>

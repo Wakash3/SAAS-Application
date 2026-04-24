@@ -1,32 +1,32 @@
-﻿{
-    "name":  "msingi-frontend",
-    "version":  "1.0.0",
-    "private":  true,
-    "scripts":  {
-                    "dev":  "next dev",
-                    "build":  "next build",
-                    "start":  "next start",
-                    "lint":  "next lint",
-                    "vercel-build":  "npm install --legacy-peer-deps \u0026\u0026 npm run build"
-                },
-    "dependencies":  {
-                         "@clerk/nextjs":  "^6.0.0",
-                         "clsx":  "^2.1.1",
-                         "lucide-react":  "^0.383.0",
-                         "next":  "14.2.4",
-                         "react":  "^18",
-                         "react-dom":  "^18",
-                         "tailwind-merge":  "^2.3.0"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^20.19.39",
-                            "@types/react":  "^18",
-                            "@types/react-dom":  "^18",
-                            "autoprefixer":  "^10.5.0",
-                            "eslint":  "^8",
-                            "eslint-config-next":  "14.2.4",
-                            "postcss":  "^8.5.10",
-                            "tailwindcss":  "^3.4.19",
-                            "typescript":  "^6.0.3"
-                        }
+{
+    "name": "msingi-frontend",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint",
+        "vercel-build": "npm install --legacy-peer-deps && npm run build"
+    },
+    "dependencies": {
+        "@clerk/nextjs": "^6.39.3",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.383.0",
+        "next": "14.2.4",
+        "react": "^18",
+        "react-dom": "^18",
+        "tailwind-merge": "^2.3.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.39",
+        "@types/react": "^18",
+        "@types/react-dom": "^18",
+        "autoprefixer": "^10.5.0",
+        "eslint": "^8",
+        "eslint-config-next": "14.2.4",
+        "postcss": "^8.5.10",
+        "tailwindcss": "^3.4.19",
+        "typescript": "^6.0.3"
+    }
 }

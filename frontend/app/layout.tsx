@@ -1,6 +1,6 @@
 ﻿import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { NavBar } from "../components/NavBar";  // ← Use relative path
+import { NavBar } from "../components/NavBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,9 +16,11 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body>
+        <body className="bg-gray-50">
           <NavBar />
-          {children}
+          <main className="min-h-screen">
+            {children}
+          </main>
         </body>
       </html>
     </ClerkProvider>
