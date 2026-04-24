@@ -1,7 +1,21 @@
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import Sidebar from "@/components/shared/sidebar";
 import Gladwell from "@/components/gladwell/gladwell";
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default async function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  // Check if user is authenticated
+  const { userId } = await auth();
+
+  // Redirect to sign-in if not authenticated
+  if (!userId) {
+    redirect("/sign-in");
+  }
+
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       <Sidebar />
