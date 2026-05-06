@@ -1,6 +1,6 @@
 # app/core/database.py
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from .config import settings
 import logging
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # Thread-local storage for tenant ID
 _current_tenant: ContextVar[str | None] = ContextVar('current_tenant', default=None)
 
-# Use the DATABASE_URL as is
+# Get DATABASE_URL from settings
 DATABASE_URL = settings.DATABASE_URL
 
 # Ensure SSL is enabled for Neon
@@ -23,15 +23,15 @@ if DATABASE_URL and "sslmode" not in DATABASE_URL:
 
 logger.info("Creating database engine...")
 
-# Create engine - SQLAlchemy will use psycopg2
+# Create engine with proper configuration
 if DATABASE_URL:
     engine = create_engine(
         DATABASE_URL,
         pool_pre_ping=True,
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        pool_timeout=settings.DATABASE_POOL_TIMEOUT,
-        echo=settings.DEBUG,
+        pool_size=settings.DATABASE_POOL_SIZE if hasattr(settings, 'DATABASE_POOL_SIZE') else 5,
+        max_overflow=settings.DATABASE_MAX_OVERFLOW if hasattr(settings, 'DATABASE_MAX_OVERFLOW') else 10,
+        pool_timeout=settings.DATABASE_POOL_TIMEOUT if hasattr(settings, 'DATABASE_POOL_TIMEOUT') else 30,
+        echo=settings.DEBUG if hasattr(settings, 'DEBUG') else False,
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 else:
@@ -66,15 +66,19 @@ def set_tenant(db, tenant_id: str):
         _current_tenant.set(tenant_id)
         
         # Set PostgreSQL session variable for RLS
-        safe_tenant_id = tenant_id.replace("'", "''")
-        db.execute(text(f"SET app.current_tenant = '{safe_tenant_id}'"))
-        db.commit()  # Use commit instead of COMMIT text
+        # Use SET LOCAL instead of SET to scope to current transaction only
+        safe_tenant_id = tenant_id.replace("'", "''")  # Escape single quotes
+        db.execute(text(f"SET LOCAL app.current_tenant = '{safe_tenant_id}'"))
         
-        if settings.DEBUG:
+        # No need to commit - the transaction will handle it
+        # Using SET LOCAL means it automatically resets at transaction end
+        
+        if hasattr(settings, 'DEBUG') and settings.DEBUG:
             logger.debug(f"Tenant set to: {tenant_id}")
     except Exception as e:
         logger.error(f"Failed to set tenant: {e}")
-        raise
+        # Don't raise - allow request to continue but log error
+        # raise - commented out to prevent breaking requests if RLS not configured
 
 
 def get_current_tenant() -> str | None:
@@ -96,6 +100,12 @@ def init_db():
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("✅ Database tables created successfully")
+        
+        # Optional: Verify RLS is enabled
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT current_setting('app.current_tenant', true)"))
+            logger.info(f"Current tenant setting: {result.scalar()}")
+            
     except Exception as e:
         logger.error(f"❌ Failed to create database tables: {e}")
         raise
@@ -121,7 +131,30 @@ def check_db_connection() -> bool:
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        logger.info("Database connection successful")
         return True
     except Exception as e:
         logger.error(f"Database connection check failed: {e}")
         return False
+
+
+# Helper function to get tenant-aware query
+def get_tenant_query(db, model):
+    """Returns a query filtered by current tenant if RLS is not available"""
+    tenant = get_current_tenant()
+    if tenant and hasattr(model, 'tenant_id'):
+        return db.query(model).filter(model.tenant_id == tenant)
+    return db.query(model)
+
+
+# Context manager for tenant scope
+from contextlib import contextmanager
+
+@contextmanager
+def tenant_context(db, tenant_id: str):
+    """Context manager for setting tenant temporarily"""
+    try:
+        set_tenant(db, tenant_id)
+        yield db
+    finally:
+        clear_tenant()

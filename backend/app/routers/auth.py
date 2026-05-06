@@ -8,9 +8,8 @@ import httpx
 import logging
 import jwt
 
-from ..core.database import get_db
+from ..core.database import get_db, get_current_tenant
 from ..core.config import settings
-from ..core.tenant import get_current_tenant, get_optional_tenant
 from ..models.tenant import Tenant
 from ..models.branch import Branch
 from ..models.user import User
@@ -48,46 +47,10 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class TenantInfoResponse(BaseModel):
-    tenant_id: str
-    tenant: Optional[dict] = None
-    branches: list = []
+class TokenValidationRequest(BaseModel):
+    token: str
 
 # ==================== HELPER FUNCTIONS ====================
-
-async def verify_clerk_token(token: str) -> dict:
-    """Verify Clerk token with Clerk API"""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://api.clerk.com/v1/tokens/verify",
-                headers={
-                    "Authorization": f"Bearer {settings.CLERK_SECRET_KEY}",
-                    "Content-Type": "application/json",
-                },
-                params={"token": token},
-            )
-        
-        if response.status_code != 200:
-            logger.error(f"Token verification failed: {response.status_code}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        
-        return response.json()
-    except httpx.TimeoutException:
-        logger.error("Clerk API timeout")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable"
-        )
-    except Exception as e:
-        logger.error(f"Token verification error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
-        )
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -96,179 +59,190 @@ def get_current_user(
     """Get current authenticated user from Clerk token"""
     token = credentials.credentials
     
-    # Check token is not null
-    if not token or token == "null" or token == "undefined":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No valid token provided"
-        )
-    
     try:
-        # First try to verify with Clerk API (production)
-        if settings.CLERK_SECRET_KEY and not settings.DEBUG:
-            payload = verify_clerk_token(token)
-            clerk_user_id = payload.get("sub")
+        # Verify token with Clerk (in production)
+        if settings.CLERK_SECRET_KEY:
+            # For production - verify signature
+            payload = jwt.decode(
+                token, 
+                settings.CLERK_SECRET_KEY,
+                algorithms=["RS256"],
+                options={"verify_aud": False}
+            )
         else:
-            # For development, decode without verification
+            # For development - skip signature verification
+            logger.warning("CLERK_SECRET_KEY not set - skipping JWT signature verification")
             payload = jwt.decode(token, options={"verify_signature": False})
-            clerk_user_id = payload.get("sub")
+        
+        clerk_user_id = payload.get("sub")
         
         if not clerk_user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
+                detail="Invalid token payload: missing user ID"
             )
         
         # Find or create user in your database
         user = db.query(User).filter(User.clerk_id == clerk_user_id).first()
+        
         if not user:
             # Create user if not exists
             user = User(
                 clerk_id=clerk_user_id,
-                email=payload.get("email", ""),
-                first_name=payload.get("first_name", payload.get("given_name", "")),
-                last_name=payload.get("last_name", payload.get("family_name", "")),
-                avatar_url=payload.get("picture", payload.get("avatar_url", "")),
+                email=payload.get("email", payload.get("email_addresses", [{}])[0].get("email_address", "")),
+                first_name=payload.get("first_name", ""),
+                last_name=payload.get("last_name", ""),
+                avatar_url=payload.get("picture", payload.get("profile_image_url", "")),
+                is_active=True
             )
             db.add(user)
             db.commit()
             db.refresh(user)
-            logger.info(f"User created: {clerk_user_id}")
+            logger.info(f"New user created from token: {clerk_user_id}")
         
         return user
         
-    except jwt.PyJWTError as e:
+    except jwt.ExpiredSignatureError:
+        logger.error("JWT token expired")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired"
+        )
+    except jwt.InvalidTokenError as e:
         logger.error(f"JWT decode error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials"
         )
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Auth error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
+            detail=f"Authentication failed: {str(e)}"
         )
+
+# Optional: Get current user without raising exception (for optional auth)
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """Get current user if authenticated, otherwise return None"""
+    if not credentials:
+        return None
+    
+    try:
+        return get_current_user(credentials, db)
+    except HTTPException:
+        return None
 
 # ==================== AUTH ENDPOINTS ====================
 
 @router.get("/me")
-def get_me(
+async def get_me(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """Get current user with tenant and branch information"""
-    tenant = db.query(Tenant).filter(Tenant.clerk_organization_id == tenant_id).first()
-    
-    if not tenant:
-        logger.warning(f"Tenant not found for organization: {tenant_id}")
-        return {
-            "user": {
+    try:
+        # Get tenant information
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
+        
+        # Build response
+        response = {
+            "tenant_id": tenant_id,
+            "tenant": {
+                "id": str(tenant.id),
+                "name": tenant.name,
+                "plan": tenant.plan,
+                "is_active": tenant.is_active,
+                "slug": tenant.slug
+            } if tenant else None,
+            "branches": [
+                {
+                    "id": str(b.id),
+                    "name": b.name,
+                    "has_fuel": b.has_fuel_station,
+                    "location": b.location,
+                    "is_active": b.is_active,
+                    "phone": getattr(b, 'phone', None),
+                    "email": getattr(b, 'email', None)
+                }
+                for b in branches if b.is_active
+            ],
+        }
+        
+        # Add user info if authenticated
+        if current_user:
+            response["user"] = {
                 "id": current_user.id,
                 "clerk_id": current_user.clerk_id,
                 "email": current_user.email,
                 "first_name": current_user.first_name,
                 "last_name": current_user.last_name,
                 "avatar_url": current_user.avatar_url,
-            },
+                "is_superuser": current_user.is_superuser
+            }
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error in get_me: {e}")
+        return {
             "tenant_id": tenant_id,
             "tenant": None,
             "branches": [],
-            "message": "Tenant not found. Please create an organization in Clerk."
+            "error": str(e) if settings.DEBUG else "Internal server error"
         }
-    
-    branches = db.query(Branch).filter(Branch.tenant_id == tenant.id).all()
-    
-    return {
-        "user": {
-            "id": current_user.id,
-            "clerk_id": current_user.clerk_id,
-            "email": current_user.email,
-            "first_name": current_user.first_name,
-            "last_name": current_user.last_name,
-            "avatar_url": current_user.avatar_url,
-        },
-        "tenant_id": tenant_id,
-        "tenant": {
-            "id": str(tenant.id),
-            "name": tenant.name, 
-            "plan": tenant.plan,
-            "slug": tenant.slug
-        } if tenant else None,
-        "branches": [
-            {
-                "id": str(b.id), 
-                "name": b.name, 
-                "has_fuel": b.has_fuel_station,
-                "location": b.location
-            } for b in branches
-        ],
-    }
-
-@router.get("/me/simple")
-def get_me_simple(
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant),
-):
-    """Simple endpoint to get just tenant info (faster)"""
-    tenant = db.query(Tenant).filter(Tenant.clerk_organization_id == tenant_id).first()
-    
-    return {
-        "tenant_id": tenant_id,
-        "tenant_name": tenant.name if tenant else None,
-        "tenant_slug": tenant.slug if tenant else None,
-    }
 
 @router.post("/clerk/webhook")
 async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
     """
     Webhook endpoint for Clerk user events
-    Clerk sends user.created, user.updated, user.deleted, organization.created events here
+    Clerk sends user.created, user.updated, user.deleted events here
     """
     try:
         payload = await request.json()
         event_type = payload.get("type")
         data = payload.get("data", {})
         
+        # Verify webhook signature (implement if needed)
+        # For now, just log
         logger.info(f"Clerk webhook received: {event_type}")
         
         if event_type == "user.created":
             # Create user in your database
-            email_addresses = data.get("email_addresses", [])
-            primary_email = email_addresses[0].get("email_address", "") if email_addresses else ""
-            
-            phone_numbers = data.get("phone_numbers", [])
-            primary_phone = phone_numbers[0].get("phone_number", "") if phone_numbers else ""
-            
+            email = data.get("email_addresses", [{}])[0].get("email_address", "")
             user = User(
                 clerk_id=data.get("id"),
-                email=primary_email,
+                email=email,
                 first_name=data.get("first_name", ""),
                 last_name=data.get("last_name", ""),
-                phone_number=primary_phone,
+                phone_number=data.get("phone_numbers", [{}])[0].get("phone_number", "") if data.get("phone_numbers") else "",
                 avatar_url=data.get("profile_image_url", ""),
-                is_active=True,
+                is_active=True
             )
             db.add(user)
             db.commit()
-            logger.info(f"User created: {user.clerk_id}")
+            logger.info(f"User created via webhook: {user.clerk_id}")
+            return {"status": "success", "event": event_type, "user_id": user.clerk_id}
             
         elif event_type == "user.updated":
             # Update user in your database
             user = db.query(User).filter(User.clerk_id == data.get("id")).first()
             if user:
-                email_addresses = data.get("email_addresses", [])
-                primary_email = email_addresses[0].get("email_address", user.email) if email_addresses else user.email
-                
-                user.email = primary_email
+                email = data.get("email_addresses", [{}])[0].get("email_address", user.email)
+                user.email = email
                 user.first_name = data.get("first_name", user.first_name)
                 user.last_name = data.get("last_name", user.last_name)
                 user.avatar_url = data.get("profile_image_url", user.avatar_url)
                 db.commit()
-                logger.info(f"User updated: {user.clerk_id}")
+                logger.info(f"User updated via webhook: {user.clerk_id}")
+                return {"status": "success", "event": event_type, "user_id": user.clerk_id}
+            else:
+                logger.warning(f"User not found for update: {data.get('id')}")
+                return {"status": "warning", "event": event_type, "message": "User not found"}
                 
         elif event_type == "user.deleted":
             # Soft delete user
@@ -276,28 +250,10 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             if user:
                 user.is_active = False
                 db.commit()
-                logger.info(f"User deleted: {user.clerk_id}")
-        
-        elif event_type == "organization.created":
-            # Create tenant from organization
-            org_id = data.get("id")
-            org_name = data.get("name")
-            org_slug = data.get("slug")
-            
-            existing_tenant = db.query(Tenant).filter(Tenant.clerk_organization_id == org_id).first()
-            if not existing_tenant:
-                tenant = Tenant(
-                    clerk_organization_id=org_id,
-                    name=org_name,
-                    slug=org_slug,
-                    plan="starter",
-                    is_active=True,
-                )
-                db.add(tenant)
-                db.commit()
-                logger.info(f"Tenant created from organization: {org_name} ({org_id})")
+                logger.info(f"User soft deleted via webhook: {user.clerk_id}")
+                return {"status": "success", "event": event_type, "user_id": user.clerk_id}
             else:
-                logger.info(f"Tenant already exists for organization: {org_id}")
+                return {"status": "warning", "event": event_type, "message": "User not found"}
         
         return {"status": "received", "event": event_type}
         
@@ -314,6 +270,7 @@ async def sync_clerk_user(
     try:
         # Find or create user
         user = db.query(User).filter(User.clerk_id == sync_data.clerk_id).first()
+        
         if not user:
             user = User(
                 clerk_id=sync_data.clerk_id,
@@ -322,32 +279,83 @@ async def sync_clerk_user(
                 last_name=sync_data.last_name,
                 phone_number=sync_data.phone_number,
                 avatar_url=sync_data.avatar_url,
+                is_active=True
             )
             db.add(user)
+            action = "created"
         else:
             user.email = sync_data.email
             user.first_name = sync_data.first_name
             user.last_name = sync_data.last_name
             user.phone_number = sync_data.phone_number
             user.avatar_url = sync_data.avatar_url
+            action = "updated"
         
         db.commit()
         db.refresh(user)
         
         return {
             "status": "success",
-            "user": {
-                "id": user.id,
-                "clerk_id": user.clerk_id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name
-            }
+            "action": action,
+            "user": UserResponse.model_validate(user)
         }
         
     except Exception as e:
         logger.error(f"Sync error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/validate-token")
+async def validate_token(
+    request: TokenValidationRequest,
+    db: Session = Depends(get_db)
+):
+    """Validate a Clerk token and return user info"""
+    try:
+        # Decode and validate token
+        if settings.CLERK_SECRET_KEY:
+            payload = jwt.decode(
+                request.token, 
+                settings.CLERK_SECRET_KEY,
+                algorithms=["RS256"]
+            )
+        else:
+            payload = jwt.decode(request.token, options={"verify_signature": False})
+        
+        clerk_user_id = payload.get("sub")
+        if not clerk_user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get or create user
+        user = db.query(User).filter(User.clerk_id == clerk_user_id).first()
+        if not user:
+            user = User(
+                clerk_id=clerk_user_id,
+                email=payload.get("email", ""),
+                first_name=payload.get("first_name", ""),
+                last_name=payload.get("last_name", ""),
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        
+        return {
+            "valid": True,
+            "user": UserResponse.model_validate(user),
+            "clerk_data": {
+                "sub": clerk_user_id,
+                "email": payload.get("email"),
+                "name": payload.get("name")
+            }
+        }
+        
+    except jwt.ExpiredSignatureError:
+        return {"valid": False, "error": "Token expired"}
+    except jwt.InvalidTokenError as e:
+        return {"valid": False, "error": f"Invalid token: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Token validation error: {e}")
+        return {"valid": False, "error": str(e)}
 
 @router.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):
@@ -355,6 +363,7 @@ async def logout(current_user: User = Depends(get_current_user)):
     Logout current user
     Note: Actual token invalidation should be handled by Clerk on frontend
     """
+    logger.info(f"User logged out: {current_user.clerk_id}")
     return {"message": "Successfully logged out"}
 
 @router.get("/health")
@@ -364,43 +373,181 @@ async def auth_health():
         "status": "healthy",
         "clerk_configured": bool(settings.CLERK_SECRET_KEY),
         "service": "Authentication",
-        "debug_mode": settings.DEBUG
+        "version": "1.0.0"
     }
 
 @router.get("/tenant-info")
 def get_tenant_info(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant),
-) -> TenantInfoResponse:
-    """Get current tenant information without user data"""
-    tenant = db.query(Tenant).filter(Tenant.clerk_organization_id == tenant_id).first()
-    branches = db.query(Branch).filter(Branch.tenant_id == tenant.id).all() if tenant else []
-    
-    return TenantInfoResponse(
-        tenant_id=tenant_id,
-        tenant={
-            "id": str(tenant.id),
-            "name": tenant.name, 
-            "plan": tenant.plan,
-            "slug": tenant.slug
-        } if tenant else None,
-        branches=[
-            {
-                "id": str(b.id), 
-                "name": b.name, 
-                "has_fuel": b.has_fuel_station,
-                "location": b.location
-            } for b in branches
-        ],
-    )
-
-@router.get("/public-info")
-async def public_info(
-    tenant_id: Optional[str] = Depends(get_optional_tenant),
+    current_user: User = Depends(get_current_user),
 ):
-    """Public endpoint that works even without authentication"""
-    return {
-        "service": "Msingi Auth API",
-        "authenticated": tenant_id is not None,
-        "tenant_id": tenant_id,
-    }
+    """Get current tenant information (requires auth)"""
+    try:
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
+        
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        
+        return {
+            "tenant_id": tenant_id,
+            "tenant": {
+                "id": str(tenant.id),
+                "name": tenant.name, 
+                "plan": tenant.plan,
+                "slug": tenant.slug,
+                "is_active": tenant.is_active
+            },
+            "branches": [
+                {
+                    "id": str(b.id), 
+                    "name": b.name, 
+                    "has_fuel": b.has_fuel_station,
+                    "location": b.location,
+                    "is_active": b.is_active
+                } for b in branches if b.is_active
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in tenant-info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== PUBLIC ENDPOINTS (No Auth Required) ====================
+
+@router.get("/tenant-info/public")
+async def get_tenant_info_public(
+    tenant_slug: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Public endpoint to get tenant info without authentication
+    Useful for testing and public-facing pages
+    """
+    try:
+        if tenant_slug:
+            tenant = db.query(Tenant).filter(
+                Tenant.slug == tenant_slug, 
+                Tenant.is_active == True
+            ).first()
+            if not tenant:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Tenant with slug '{tenant_slug}' not found"
+                )
+        else:
+            # Get first active tenant
+            tenant = db.query(Tenant).filter(Tenant.is_active == True).first()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="No active tenant found")
+        
+        branches = db.query(Branch).filter(
+            Branch.tenant_id == tenant.id, 
+            Branch.is_active == True
+        ).all()
+        
+        return {
+            "tenant_id": str(tenant.id),
+            "tenant": {
+                "name": tenant.name,
+                "slug": tenant.slug,
+                "plan": tenant.plan,
+                "logo_url": getattr(tenant, 'logo_url', None),
+                "primary_color": getattr(tenant, 'primary_color', None)
+            },
+            "branches": [
+                {
+                    "id": str(b.id),
+                    "name": b.name,
+                    "has_fuel": b.has_fuel_station,
+                    "location": b.location,
+                    "phone": getattr(b, 'phone', None),
+                    "email": getattr(b, 'email', None),
+                    "working_hours": getattr(b, 'working_hours', None)
+                } for b in branches
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in tenant-info/public: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tenants")
+async def list_all_tenants_public(
+    db: Session = Depends(get_db)
+):
+    """
+    Public endpoint to list all active tenants (no auth required)
+    Useful for landing pages and tenant selection
+    """
+    try:
+        tenants = db.query(Tenant).filter(Tenant.is_active == True).all()
+        
+        return {
+            "tenants": [
+                {
+                    "id": str(t.id),
+                    "name": t.name,
+                    "slug": t.slug,
+                    "plan": t.plan,
+                    "logo_url": getattr(t, 'logo_url', None)
+                } for t in tenants
+            ],
+            "count": len(tenants)
+        }
+    except Exception as e:
+        logger.error(f"Error listing tenants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tenant-by-slug/{slug}")
+async def get_tenant_by_slug_public(
+    slug: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Public endpoint to get tenant by slug (no auth required)
+    """
+    try:
+        tenant = db.query(Tenant).filter(
+            Tenant.slug == slug, 
+            Tenant.is_active == True
+        ).first()
+        
+        if not tenant:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Tenant with slug '{slug}' not found"
+            )
+        
+        branches = db.query(Branch).filter(
+            Branch.tenant_id == tenant.id, 
+            Branch.is_active == True
+        ).all()
+        
+        return {
+            "tenant_id": str(tenant.id),
+            "tenant": {
+                "name": tenant.name,
+                "slug": tenant.slug,
+                "plan": tenant.plan,
+                "is_active": tenant.is_active
+            },
+            "branches": [
+                {
+                    "id": str(b.id),
+                    "name": b.name,
+                    "has_fuel": b.has_fuel_station,
+                    "location": b.location,
+                    "phone": getattr(b, 'phone', None),
+                    "email": getattr(b, 'email', None)
+                } for b in branches
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in tenant-by-slug: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
