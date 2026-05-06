@@ -135,6 +135,32 @@ def get_current_user_optional(
     except HTTPException:
         return None
 
+def get_tenant_by_identifier(db: Session, tenant_id: str) -> Optional[Tenant]:
+    """
+    Helper function to find tenant by either:
+    1. clerk_organization_id (org_xxxxx format)
+    2. id (UUID format)
+    """
+    logger.info(f"Looking up tenant for identifier: {tenant_id}")
+    
+    # Try by clerk_organization_id first (org_xxxxx format)
+    tenant = db.query(Tenant).filter(
+        Tenant.clerk_organization_id == tenant_id
+    ).first()
+    
+    # Fall back to id (UUID)
+    if not tenant:
+        tenant = db.query(Tenant).filter(
+            Tenant.id == tenant_id
+        ).first()
+    
+    if tenant:
+        logger.info(f"Tenant found: {tenant.name} (ID: {tenant.id}, Clerk Org ID: {tenant.clerk_organization_id})")
+    else:
+        logger.warning(f"No tenant found for identifier: {tenant_id}")
+    
+    return tenant
+
 # ==================== AUTH ENDPOINTS ====================
 
 @router.get("/me")
@@ -143,11 +169,24 @@ async def get_me(
     tenant_id: str = Depends(get_current_tenant),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get current user with tenant and branch information"""
+    """
+    Get current user with tenant and branch information
+    Supports tenant lookup by both clerk_organization_id and tenant.id
+    """
     try:
-        # Get tenant information
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
+        logger.info(f"GET /me called with tenant_id: {tenant_id}")
+        
+        # Find tenant using the helper function
+        tenant = get_tenant_by_identifier(db, tenant_id)
+        
+        # Get branches if tenant exists
+        branches = []
+        if tenant:
+            branches = db.query(Branch).filter(
+                Branch.tenant_id == tenant.id,
+                Branch.is_active == True
+            ).all()
+            logger.info(f"Found {len(branches)} branches for tenant {tenant.name}")
         
         # Build response
         response = {
@@ -157,7 +196,8 @@ async def get_me(
                 "name": tenant.name,
                 "plan": tenant.plan,
                 "is_active": tenant.is_active,
-                "slug": tenant.slug
+                "slug": tenant.slug,
+                "clerk_organization_id": tenant.clerk_organization_id
             } if tenant else None,
             "branches": [
                 {
@@ -169,7 +209,7 @@ async def get_me(
                     "phone": getattr(b, 'phone', None),
                     "email": getattr(b, 'email', None)
                 }
-                for b in branches if b.is_active
+                for b in branches
             ],
         }
         
@@ -182,13 +222,14 @@ async def get_me(
                 "first_name": current_user.first_name,
                 "last_name": current_user.last_name,
                 "avatar_url": current_user.avatar_url,
-                "is_superuser": current_user.is_superuser
+                "is_superuser": current_user.is_superuser,
+                "is_active": current_user.is_active
             }
         
         return response
         
     except Exception as e:
-        logger.error(f"Error in get_me: {e}")
+        logger.error(f"Error in get_me: {e}", exc_info=True)
         return {
             "tenant_id": tenant_id,
             "tenant": None,
@@ -255,10 +296,23 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
             else:
                 return {"status": "warning", "event": event_type, "message": "User not found"}
         
+        elif event_type == "organization.created":
+            # Handle organization creation (tenant)
+            logger.info(f"Organization created: {data.get('id')} - {data.get('name')}")
+            # You might want to automatically create a tenant here
+            
+        elif event_type == "organization.updated":
+            # Handle organization update
+            logger.info(f"Organization updated: {data.get('id')}")
+            
+        elif event_type == "organization.deleted":
+            # Handle organization deletion
+            logger.info(f"Organization deleted: {data.get('id')}")
+        
         return {"status": "received", "event": event_type}
         
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
 @router.post("/clerk/sync")
@@ -384,11 +438,15 @@ def get_tenant_info(
 ):
     """Get current tenant information (requires auth)"""
     try:
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
+        tenant = get_tenant_by_identifier(db, tenant_id)
         
         if not tenant:
             raise HTTPException(status_code=404, detail="Tenant not found")
+        
+        branches = db.query(Branch).filter(
+            Branch.tenant_id == tenant.id,
+            Branch.is_active == True
+        ).all()
         
         return {
             "tenant_id": tenant_id,
@@ -397,7 +455,8 @@ def get_tenant_info(
                 "name": tenant.name, 
                 "plan": tenant.plan,
                 "slug": tenant.slug,
-                "is_active": tenant.is_active
+                "is_active": tenant.is_active,
+                "clerk_organization_id": tenant.clerk_organization_id
             },
             "branches": [
                 {
@@ -405,8 +464,10 @@ def get_tenant_info(
                     "name": b.name, 
                     "has_fuel": b.has_fuel_station,
                     "location": b.location,
-                    "is_active": b.is_active
-                } for b in branches if b.is_active
+                    "is_active": b.is_active,
+                    "phone": getattr(b, 'phone', None),
+                    "email": getattr(b, 'email', None)
+                } for b in branches
             ],
         }
     except HTTPException:
@@ -420,28 +481,30 @@ def get_tenant_info(
 @router.get("/tenant-info/public")
 async def get_tenant_info_public(
     tenant_slug: Optional[str] = None,
+    tenant_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
     Public endpoint to get tenant info without authentication
     Useful for testing and public-facing pages
+    Can query by tenant_slug or tenant_id
     """
     try:
+        tenant = None
+        
         if tenant_slug:
             tenant = db.query(Tenant).filter(
                 Tenant.slug == tenant_slug, 
                 Tenant.is_active == True
             ).first()
-            if not tenant:
-                raise HTTPException(
-                    status_code=404, 
-                    detail=f"Tenant with slug '{tenant_slug}' not found"
-                )
+        elif tenant_id:
+            tenant = get_tenant_by_identifier(db, tenant_id)
         else:
             # Get first active tenant
             tenant = db.query(Tenant).filter(Tenant.is_active == True).first()
-            if not tenant:
-                raise HTTPException(status_code=404, detail="No active tenant found")
+        
+        if not tenant:
+            raise HTTPException(status_code=404, detail="No active tenant found")
         
         branches = db.query(Branch).filter(
             Branch.tenant_id == tenant.id, 
@@ -455,7 +518,8 @@ async def get_tenant_info_public(
                 "slug": tenant.slug,
                 "plan": tenant.plan,
                 "logo_url": getattr(tenant, 'logo_url', None),
-                "primary_color": getattr(tenant, 'primary_color', None)
+                "primary_color": getattr(tenant, 'primary_color', None),
+                "clerk_organization_id": tenant.clerk_organization_id
             },
             "branches": [
                 {
@@ -472,7 +536,7 @@ async def get_tenant_info_public(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in tenant-info/public: {e}")
+        logger.error(f"Error in tenant-info/public: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/tenants")
@@ -493,7 +557,8 @@ async def list_all_tenants_public(
                     "name": t.name,
                     "slug": t.slug,
                     "plan": t.plan,
-                    "logo_url": getattr(t, 'logo_url', None)
+                    "logo_url": getattr(t, 'logo_url', None),
+                    "clerk_organization_id": t.clerk_organization_id
                 } for t in tenants
             ],
             "count": len(tenants)
@@ -533,7 +598,8 @@ async def get_tenant_by_slug_public(
                 "name": tenant.name,
                 "slug": tenant.slug,
                 "plan": tenant.plan,
-                "is_active": tenant.is_active
+                "is_active": tenant.is_active,
+                "clerk_organization_id": tenant.clerk_organization_id
             },
             "branches": [
                 {
@@ -549,5 +615,5 @@ async def get_tenant_by_slug_public(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in tenant-by-slug: {e}")
+        logger.error(f"Error in tenant-by-slug: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
