@@ -1,5 +1,5 @@
 # app/routers/auth.py
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
@@ -7,6 +7,8 @@ from typing import Optional
 import httpx
 import logging
 import jwt
+import base64
+import json
 
 from ..core.database import get_db, get_current_tenant
 from ..core.config import settings
@@ -236,6 +238,110 @@ async def get_me(
             "branches": [],
             "error": str(e) if settings.DEBUG else "Internal server error"
         }
+
+@router.get("/debug-token")
+async def debug_token(
+    authorization: str = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+):
+    """
+    DEBUG ENDPOINT - Remove after fixing authentication issues
+    This endpoint helps debug JWT token and tenant mapping problems
+    """
+    if not authorization:
+        return {"error": "No authorization header provided"}
+    
+    # Extract token
+    token = authorization.replace("Bearer ", "").strip()
+    
+    if not token or token in ("null", "undefined"):
+        return {"error": "Invalid token value"}
+    
+    try:
+        # Decode JWT payload manually
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {"error": f"Invalid JWT format: expected 3 parts, got {len(parts)}"}
+        
+        payload_b64 = parts[1]
+        # Add padding for base64 decoding
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        
+        # Extract organization info
+        org_data = payload.get("o")
+        org_id = None
+        if org_data and isinstance(org_data, dict):
+            org_id = org_data.get("id")
+        
+        # Get organization ID from top-level claim as fallback
+        top_level_org_id = payload.get("org_id")
+        
+        # Get user ID
+        user_id = payload.get("sub")
+        
+        # Query all tenants from database for comparison
+        from sqlalchemy import text
+        tenants_query = db.execute(text("""
+            SELECT id, name, clerk_organization_id, slug, is_active 
+            FROM tenants 
+            ORDER BY created_at DESC 
+            LIMIT 20
+        """))
+        
+        all_tenants = [
+            {
+                "id": str(row[0]), 
+                "name": row[1], 
+                "clerk_org_id": row[2],
+                "slug": row[3],
+                "is_active": row[4]
+            } 
+            for row in tenants_query.fetchall()
+        ]
+        
+        # Try to find matching tenant
+        matching_tenant = None
+        if org_id:
+            for tenant in all_tenants:
+                if tenant["clerk_org_id"] == org_id:
+                    matching_tenant = tenant
+                    break
+        
+        if not matching_tenant and top_level_org_id:
+            for tenant in all_tenants:
+                if tenant["clerk_org_id"] == top_level_org_id:
+                    matching_tenant = tenant
+                    break
+        
+        return {
+            "token_org_id_from_o_claim": org_id,
+            "token_org_id_top_level": top_level_org_id,
+            "token_user_id": user_id,
+            "token_email": payload.get("email"),
+            "token_name": payload.get("name"),
+            "token_o_claim_full": org_data,
+            "all_token_claims": list(payload.keys()),
+            "tenants_in_db": all_tenants,
+            "matching_tenant": matching_tenant,
+            "tenant_mapping_suggestion": f"Create tenant with clerk_organization_id = '{org_id or top_level_org_id}'" if not matching_tenant and (org_id or top_level_org_id) else None,
+            "debug_mode": settings.DEBUG,
+            "clerk_configured": bool(settings.CLERK_SECRET_KEY)
+        }
+        
+    except base64.binascii.Error as e:
+        logger.error(f"Base64 decoding error in debug-token: {e}")
+        return {"error": f"Base64 decoding failed: {str(e)}", "token_preview": token[:50] + "..."}
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error in debug-token: {e}")
+        return {"error": f"JSON decode failed: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Unexpected error in debug-token: {e}", exc_info=True)
+        return {"error": f"Unexpected error: {str(e)}"}
 
 @router.post("/clerk/webhook")
 async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
