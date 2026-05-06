@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import httpx
@@ -10,7 +11,8 @@ import jwt
 import base64
 import json
 
-from ..core.database import get_db, get_current_tenant
+from ..core.database import get_db
+from ..core.tenant import get_current_tenant
 from ..core.config import settings
 from ..models.tenant import Tenant
 from ..models.branch import Branch
@@ -152,9 +154,12 @@ def get_tenant_by_identifier(db: Session, tenant_id: str) -> Optional[Tenant]:
     
     # Fall back to id (UUID)
     if not tenant:
-        tenant = db.query(Tenant).filter(
-            Tenant.id == tenant_id
-        ).first()
+        try:
+            tenant = db.query(Tenant).filter(
+                Tenant.id == tenant_id
+            ).first()
+        except Exception as e:
+            logger.warning(f"Failed to query by ID: {e}")
     
     if tenant:
         logger.info(f"Tenant found: {tenant.name} (ID: {tenant.id}, Clerk Org ID: {tenant.clerk_organization_id})")
@@ -169,75 +174,54 @@ def get_tenant_by_identifier(db: Session, tenant_id: str) -> Optional[Tenant]:
 async def get_me(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant),
-    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
     Get current user with tenant and branch information
     Supports tenant lookup by both clerk_organization_id and tenant.id
     """
-    try:
-        logger.info(f"GET /me called with tenant_id: {tenant_id}")
-        
-        # Find tenant using the helper function
-        tenant = get_tenant_by_identifier(db, tenant_id)
-        
-        # Get branches if tenant exists
-        branches = []
-        if tenant:
-            branches = db.query(Branch).filter(
-                Branch.tenant_id == tenant.id,
-                Branch.is_active == True
-            ).all()
-            logger.info(f"Found {len(branches)} branches for tenant {tenant.name}")
-        
-        # Build response
-        response = {
-            "tenant_id": tenant_id,
-            "tenant": {
-                "id": str(tenant.id),
-                "name": tenant.name,
-                "plan": tenant.plan,
-                "is_active": tenant.is_active,
-                "slug": tenant.slug,
-                "clerk_organization_id": tenant.clerk_organization_id
-            } if tenant else None,
-            "branches": [
-                {
-                    "id": str(b.id),
-                    "name": b.name,
-                    "has_fuel": b.has_fuel_station,
-                    "location": b.location,
-                    "is_active": b.is_active,
-                    "phone": getattr(b, 'phone', None),
-                    "email": getattr(b, 'email', None)
-                }
-                for b in branches
-            ],
-        }
-        
-        # Add user info if authenticated
-        if current_user:
-            response["user"] = {
-                "id": current_user.id,
-                "clerk_id": current_user.clerk_id,
-                "email": current_user.email,
-                "first_name": current_user.first_name,
-                "last_name": current_user.last_name,
-                "avatar_url": current_user.avatar_url,
-                "is_superuser": current_user.is_superuser,
-                "is_active": current_user.is_active
+    logger.info(f"GET /me called with tenant_id: {tenant_id}")
+    
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="No tenant context")
+    
+    # Find tenant using the helper function
+    tenant = get_tenant_by_identifier(db, tenant_id)
+    
+    # Get branches if tenant exists
+    branches = []
+    if tenant:
+        branches = db.query(Branch).filter(
+            Branch.tenant_id == tenant.id,
+            Branch.is_active == True
+        ).all()
+        logger.info(f"Found {len(branches)} branches for tenant {tenant.name}")
+    
+    # Build response
+    response = {
+        "tenant_id": tenant_id,
+        "tenant": {
+            "id": str(tenant.id),
+            "name": tenant.name,
+            "plan": tenant.plan,
+            "is_active": tenant.is_active,
+            "slug": tenant.slug,
+            "clerk_organization_id": tenant.clerk_organization_id
+        } if tenant else None,
+        "branches": [
+            {
+                "id": str(b.id),
+                "name": b.name,
+                "has_fuel": b.has_fuel_station,
+                "location": b.location,
+                "is_active": b.is_active,
+                "phone": getattr(b, 'phone', None),
+                "email": getattr(b, 'email', None)
             }
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error in get_me: {e}", exc_info=True)
-        return {
-            "tenant_id": tenant_id,
-            "tenant": None,
-            "branches": [],
-            "error": str(e) if settings.DEBUG else "Internal server error"
-        }
+            for b in branches
+        ],
+    }
+    
+    return response
 
 @router.get("/debug-token")
 async def debug_token(
@@ -285,7 +269,6 @@ async def debug_token(
         user_id = payload.get("sub")
         
         # Query all tenants from database for comparison
-        from sqlalchemy import text
         tenants_query = db.execute(text("""
             SELECT id, name, clerk_organization_id, slug, is_active 
             FROM tenants 
@@ -328,6 +311,7 @@ async def debug_token(
             "all_token_claims": list(payload.keys()),
             "tenants_in_db": all_tenants,
             "matching_tenant": matching_tenant,
+            "match_found": matching_tenant is not None,
             "tenant_mapping_suggestion": f"Create tenant with clerk_organization_id = '{org_id or top_level_org_id}'" if not matching_tenant and (org_id or top_level_org_id) else None,
             "debug_mode": settings.DEBUG,
             "clerk_configured": bool(settings.CLERK_SECRET_KEY)
@@ -355,7 +339,6 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
         data = payload.get("data", {})
         
         # Verify webhook signature (implement if needed)
-        # For now, just log
         logger.info(f"Clerk webhook received: {event_type}")
         
         if event_type == "user.created":
@@ -405,14 +388,12 @@ async def clerk_webhook(request: Request, db: Session = Depends(get_db)):
         elif event_type == "organization.created":
             # Handle organization creation (tenant)
             logger.info(f"Organization created: {data.get('id')} - {data.get('name')}")
-            # You might want to automatically create a tenant here
+            # Optionally auto-create tenant here
             
         elif event_type == "organization.updated":
-            # Handle organization update
             logger.info(f"Organization updated: {data.get('id')}")
             
         elif event_type == "organization.deleted":
-            # Handle organization deletion
             logger.info(f"Organization deleted: {data.get('id')}")
         
         return {"status": "received", "event": event_type}
@@ -519,10 +500,7 @@ async def validate_token(
 
 @router.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):
-    """
-    Logout current user
-    Note: Actual token invalidation should be handled by Clerk on frontend
-    """
+    """Logout current user"""
     logger.info(f"User logged out: {current_user.clerk_id}")
     return {"message": "Successfully logged out"}
 
@@ -540,7 +518,6 @@ async def auth_health():
 def get_tenant_info(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
 ):
     """Get current tenant information (requires auth)"""
     try:
@@ -590,11 +567,7 @@ async def get_tenant_info_public(
     tenant_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """
-    Public endpoint to get tenant info without authentication
-    Useful for testing and public-facing pages
-    Can query by tenant_slug or tenant_id
-    """
+    """Public endpoint to get tenant info without authentication"""
     try:
         tenant = None
         
@@ -649,10 +622,7 @@ async def get_tenant_info_public(
 async def list_all_tenants_public(
     db: Session = Depends(get_db)
 ):
-    """
-    Public endpoint to list all active tenants (no auth required)
-    Useful for landing pages and tenant selection
-    """
+    """Public endpoint to list all active tenants"""
     try:
         tenants = db.query(Tenant).filter(Tenant.is_active == True).all()
         
@@ -678,9 +648,7 @@ async def get_tenant_by_slug_public(
     slug: str,
     db: Session = Depends(get_db)
 ):
-    """
-    Public endpoint to get tenant by slug (no auth required)
-    """
+    """Public endpoint to get tenant by slug"""
     try:
         tenant = db.query(Tenant).filter(
             Tenant.slug == slug, 

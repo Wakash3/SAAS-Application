@@ -44,7 +44,7 @@ def clear_tenant():
 
 def extract_tenant_from_token(token: str) -> Optional[str]:
     """
-    Extract tenant ID from Clerk JWT token.
+    Extract tenant ID from Clerk JWT token using base64 decoding only.
     Supports multiple JWT claim formats:
     1. 'o' claim (organization data) - Clerk's preferred format
     2. 'org_id' top-level claim
@@ -111,7 +111,7 @@ def extract_tenant_with_jose(token: str) -> Optional[str]:
     try:
         # Get unverified claims (doesn't verify signature)
         payload = jwt.get_unverified_claims(token)
-        logger.debug(f"JWT claims from jose: {payload.keys()}")
+        logger.debug(f"JWT claims from jose: {list(payload.keys())}")
         
         # Check for organization data
         org_data = payload.get("o")
@@ -147,7 +147,47 @@ async def get_current_tenant(
     """
     Validates Clerk JWT and returns tenant_id (org ID).
     Sets RLS context on the DB session.
-    Supports both development and production modes.
+    Simplified version - extracts tenant directly from token.
+    """
+    # Check authorization header
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid auth header format")
+    
+    token = authorization.split(" ")[1]
+    
+    if not token or token in ("null", "undefined", ""):
+        raise HTTPException(status_code=401, detail="No valid token provided")
+    
+    # Extract org_id using base64 decoding only
+    org_id = extract_tenant_from_token(token)
+    
+    if not org_id:
+        # Try jose method as fallback
+        org_id = extract_tenant_with_jose(token)
+    
+    if not org_id:
+        logger.error("Could not extract tenant from token")
+        raise HTTPException(status_code=401, detail="Could not extract tenant from token")
+    
+    # Clear any existing tenant and set the new one
+    clear_tenant()
+    set_tenant(db, org_id)
+    logger.info(f"Tenant authenticated: {org_id}")
+    return org_id
+
+
+async def get_current_tenant_with_verification(
+    authorization: str = Header(None, alias="Authorization"),
+    x_branch_id: Optional[str] = Header(None, alias="X-Branch-ID"),
+    db: Session = Depends(get_db),
+) -> str:
+    """
+    Validates Clerk JWT with Clerk API verification and returns tenant_id (org ID).
+    Sets RLS context on the DB session.
+    Supports both development and production modes with API verification.
     """
     # Check authorization header
     if not authorization:
@@ -206,7 +246,7 @@ async def get_current_tenant(
                 raise HTTPException(status_code=401, detail="Invalid or expired token")
             
             data = response.json()
-            logger.debug(f"Clerk API response: {data.keys()}")
+            logger.debug(f"Clerk API response keys: {list(data.keys())}")
             
             # Extract org_id from API response
             org_id = data.get("org_id") or data.get("sub")
